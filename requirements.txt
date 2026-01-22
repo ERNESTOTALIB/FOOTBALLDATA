@@ -1,0 +1,5 @@
+# List of Python dependencies for the football scraping project.
+# Render will install these automatically during deployment.
+pandas==1.5.3
+requests==2.31.0
+psycopg2-binary==2.9.9
