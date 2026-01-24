@@ -237,15 +237,17 @@ def upsert_team_stats(conn, stats: List[Dict[str, object]]) -> None:
         "recent_reds_away",
     ]
     values = [[stat[col] for col in cols] for stat in stats]
-    placeholders = ", ".join(["%s"] * len(cols))
+    # Build the list of columns to update on conflict (skip league, season and team)
     updates = ", ".join([f"{col} = EXCLUDED.{col}" for col in cols[3:]])
+    # Use a single placeholder ("%s") for execute_values which will expand the list of tuples
     sql = f"""
         INSERT INTO team_stats ({', '.join(cols)})
-        VALUES {placeholders}
+        VALUES %s
         ON CONFLICT (league, season, team)
         DO UPDATE SET
             {updates};
     """
+    # execute_values expects the query to contain exactly one %s placeholder for the values list
     execute_values(conn.cursor(), sql, values)
     conn.commit()
 
