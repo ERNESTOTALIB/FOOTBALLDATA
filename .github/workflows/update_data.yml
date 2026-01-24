@@ -2,28 +2,34 @@ name: Update football data
 
 on:
   schedule:
-    - cron: '0 5 * * MON'
+    - cron: '0 5 * * MON'  # Monday 05:00 UTC
   workflow_dispatch: {}
-  
+
 jobs:
   update:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.10'
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
 
-    - name: Install dependencies
-      run: |
-        pip install -r requirements.txt
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
 
-    - name: Run scraper
-      env:
-        DATABASE_URL: ${{ secrets.DATABASE_URL }}
-      run: |
-        python main.py
+      - name: Run scraper
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          python main.py
+
+      - name: Run insights update
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          python update_insights.py
