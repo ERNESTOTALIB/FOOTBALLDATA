@@ -150,7 +150,85 @@ def load_data(league: str) -> pd.DataFrame:
         finally:
             conn.close()
         # Ensure date column is datetime
-        df["Date"] = pd.to_datetime(df["Date"])
+        # --- Normaliza nombres de columnas (DB suele venir en snake_case) ---
+        if "Date" not in df.columns:
+            for c in ["date", "match_date", "utc_date", "fixture_date"]:
+                if c in df.columns:
+                df["Date"] = df[c]
+                    break
+
+if "HomeTeam" not in df.columns:
+    for c in ["home_team", "home", "team_home"]:
+        if c in df.columns:
+            df["HomeTeam"] = df[c]
+            break
+
+if "AwayTeam" not in df.columns:
+    for c in ["away_team", "away", "team_away"]:
+        if c in df.columns:
+            df["AwayTeam"] = df[c]
+            break
+
+# Goles
+if "FTHG" not in df.columns:
+    for c in ["home_goals", "home_score", "hg", "goals_home"]:
+        if c in df.columns:
+            df["FTHG"] = df[c]
+            break
+
+if "FTAG" not in df.columns:
+    for c in ["away_goals", "away_score", "ag", "goals_away"]:
+        if c in df.columns:
+            df["FTAG"] = df[c]
+            break
+
+# Córners (si tu app los usa)
+if "HC" not in df.columns:
+    for c in ["home_corners", "corners_home"]:
+        if c in df.columns:
+            df["HC"] = df[c]
+            break
+
+if "AC" not in df.columns:
+    for c in ["away_corners", "corners_away"]:
+        if c in df.columns:
+            df["AC"] = df[c]
+            break
+
+# Amarillas
+if "HY" not in df.columns:
+    for c in ["home_yellow", "home_yellow_cards", "yellow_home"]:
+        if c in df.columns:
+            df["HY"] = df[c]
+            break
+
+if "AY" not in df.columns:
+    for c in ["away_yellow", "away_yellow_cards", "yellow_away"]:
+        if c in df.columns:
+            df["AY"] = df[c]
+            break
+
+# Rojas
+if "HR" not in df.columns:
+    for c in ["home_red", "home_red_cards", "red_home"]:
+        if c in df.columns:
+            df["HR"] = df[c]
+            break
+
+if "AR" not in df.columns:
+    for c in ["away_red", "away_red_cards", "red_away"]:
+        if c in df.columns:
+            df["AR"] = df[c]
+            break
+
+# --- Validaciones mínimas para evitar errores silenciosos ---
+required = ["Date", "HomeTeam", "AwayTeam"]
+missing = [c for c in required if c not in df.columns]
+if missing:
+    raise KeyError(f"Faltan columnas requeridas: {missing}. Columnas disponibles: {list(df.columns)}")
+
+# --- Parseo de tipos ---
+df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
         return df
     # Fallback to local CSV
     file_path = DATA_PATHS.get(league)
