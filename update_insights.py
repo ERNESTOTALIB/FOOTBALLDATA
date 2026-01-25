@@ -51,6 +51,53 @@ from psycopg2.extras import execute_values
 FORM_MATCHES = 10
 
 
+# -----------------------------------------------------------------------------
+# Schema management
+#
+# The insights script writes aggregate team statistics into the `team_stats`
+# table.  In early iterations of this project the table had to be created
+# manually which led to runtime errors when the table was missing.  The
+# function below creates the table if it does not already exist.  The
+# `main()` function calls this helper before any data is written so the
+# workflow can run on a fresh database without manual intervention.
+
+def ensure_team_stats_table(conn) -> None:
+    """Ensure the team_stats table exists.
+
+    This function creates the `team_stats` table with the expected schema if
+    it does not already exist.  It also defines a composite primary key on
+    (league, season, team) so that upserts work correctly.  Any columns
+    required by the insights output should be added here.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS team_stats (
+                league TEXT,
+                season TEXT,
+                team TEXT,
+                avg_goals_for NUMERIC,
+                avg_goals_against NUMERIC,
+                avg_corners NUMERIC,
+                avg_yellows NUMERIC,
+                avg_reds NUMERIC,
+                recent_goals_for_home NUMERIC,
+                recent_goals_against_home NUMERIC,
+                recent_goals_for_away NUMERIC,
+                recent_goals_against_away NUMERIC,
+                recent_corners_home NUMERIC,
+                recent_corners_away NUMERIC,
+                recent_yellows_home NUMERIC,
+                recent_yellows_away NUMERIC,
+                recent_reds_home NUMERIC,
+                recent_reds_away NUMERIC,
+                PRIMARY KEY (league, season, team)
+            );
+            """
+        )
+    conn.commit()
+
+
 def weighted_form(matches: pd.DataFrame, goals_for_col: str, goals_against_col: str) -> Dict[str, float]:
     """Compute weighted averages for goals, corners, yellows and reds.
 
@@ -258,6 +305,8 @@ def main() -> None:
         print("DATABASE_URL environment variable is not set", file=sys.stderr)
         sys.exit(1)
     conn = psycopg2.connect(url)
+    # Ensure team_stats table exists before fetching and writing data
+    ensure_team_stats_table(conn)
     matches_df = fetch_match_data(conn)
     if matches_df.empty:
         print("No match data found.")
