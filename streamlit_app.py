@@ -16,7 +16,6 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-
 # ---------------------------------------------------------------------------
 # Configuration
 
@@ -149,6 +148,77 @@ def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def add_derived_cols(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    # Goals totals and difference
+    if "FTHG" in df.columns and "FTAG" in df.columns:
+        df["goals_total"] = df["FTHG"].fillna(0) + df["FTAG"].fillna(0)
+        df["goal_diff"] = df["FTHG"].fillna(0) - df["FTAG"].fillna(0)
+    # Cards totals
+    for c in ["HY", "AY", "HR", "AR"]:
+        if c not in df.columns:
+            df[c] = 0
+    df["cards_total"] = df["HY"].fillna(0) + df["AY"].fillna(0) + df["HR"].fillna(0) + df["AR"].fillna(0)
+    df["cards_home"] = df["HY"].fillna(0) + df["HR"].fillna(0)
+    df["cards_away"] = df["AY"].fillna(0) + df["AR"].fillna(0)
+    # Corners totals
+    for c in ["HC", "AC"]:
+        if c not in df.columns:
+            df[c] = 0
+    df["corners_total"] = df["HC"].fillna(0) + df["AC"].fillna(0)
+    df["corners_home"] = df["HC"].fillna(0)
+    df["corners_away"] = df["AC"].fillna(0)
+    return df
+
+
+def over_under_prob(df: pd.DataFrame, col: str, line: float, side: str) -> dict:
+    s = df[col].dropna()
+    n = int(len(s))
+    if n == 0:
+        return {"p": None, "hits": 0, "n": 0}
+    if side == "over":
+        hits = int((s > line).sum())
+    else:
+        hits = int((s < line).sum())
+    return {"p": hits / n, "hits": hits, "n": n}
+
+
+def handicap_prob(df: pd.DataFrame, team_role: str, line: float) -> dict:
+    gd = df["goal_diff"].dropna()
+    n = int(len(gd))
+    if n == 0:
+        return {"p": None, "hits": 0, "n": 0}
+    if team_role == "home":
+        hits = int(((gd + line) > 0).sum())
+    else:
+        hits = int(((-gd + line) > 0).sum())
+    return {"p": hits / n, "hits": hits, "n": n}
+
+
+def subset_lastN_any(df: pd.DataFrame, team: str, N: int) -> pd.DataFrame:
+    t = df[(df["HomeTeam"] == team) | (df["AwayTeam"] == team)].sort_values("Date")
+    return t.tail(N)
+
+
+def subset_lastN_home(df: pd.DataFrame, team: str, N: int) -> pd.DataFrame:
+    t = df[df["HomeTeam"] == team].sort_values("Date")
+    return t.tail(N)
+
+
+def subset_lastN_away(df: pd.DataFrame, team: str, N: int) -> pd.DataFrame:
+    t = df[df["AwayTeam"] == team].sort_values("Date")
+    return t.tail(N)
+
+
+def subset_h2h(df: pd.DataFrame, home: str, away: str, years: int) -> pd.DataFrame:
+    if "Date" not in df.columns or df["Date"].isna().all():
+        return pd.DataFrame()
+    cutoff = df["Date"].max() - pd.DateOffset(years=int(years))
+    m = (((df["HomeTeam"] == home) & (df["AwayTeam"] == away)) |
+         ((df["HomeTeam"] == away) & (df["AwayTeam"] == home)))
+    return df[m & (df["Date"] >= cutoff)].sort_values("Date")
+
+
 @st.cache_data
 def load_data(league: str) -> pd.DataFrame:
     """Load match data for the given league (DB if enabled, else local CSV)."""
@@ -206,6 +276,7 @@ def load_data(league: str) -> pd.DataFrame:
             conn.close()
 
         df = normalize_columns(df)
+        df = add_derived_cols(df)
 
         required = ["Date", "HomeTeam", "AwayTeam"]
         missing = [c for c in required if c not in df.columns]
@@ -215,7 +286,6 @@ def load_data(league: str) -> pd.DataFrame:
                 f"Columnas disponibles: {list(df.columns)}"
             )
             return pd.DataFrame()
-
         return df
 
     # Fallback to local CSV
@@ -234,6 +304,7 @@ def load_data(league: str) -> pd.DataFrame:
 
     df = pd.read_csv(path)
     df = normalize_columns(df)
+    df = add_derived_cols(df)
 
     required = ["Date", "HomeTeam", "AwayTeam"]
     missing = [c for c in required if c not in df.columns]
@@ -281,7 +352,6 @@ def compute_team_stats(df: pd.DataFrame, team: str) -> Dict[str, float]:
     if form.empty:
         return {}
 
-    # Newest matches get higher weight
     weights = np.linspace(1, 2, len(form))
     weights = weights / weights.sum()
 
@@ -299,13 +369,10 @@ def compute_team_stats(df: pd.DataFrame, team: str) -> Dict[str, float]:
         "weighted_goals_against_home": safe_weighted(home_matches.get("FTAG"), weights),
         "weighted_goals_for_away": safe_weighted(away_matches.get("FTAG"), weights),
         "weighted_goals_against_away": safe_weighted(away_matches.get("FTHG"), weights),
-
         "weighted_corners_home": safe_weighted(home_matches.get("HC"), weights),
         "weighted_corners_away": safe_weighted(away_matches.get("AC"), weights),
-
         "weighted_yellows_home": safe_weighted(home_matches.get("HY"), weights),
         "weighted_yellows_away": safe_weighted(away_matches.get("AY"), weights),
-
         "weighted_reds_home": safe_weighted(home_matches.get("HR"), weights),
         "weighted_reds_away": safe_weighted(away_matches.get("AR"), weights),
     }
@@ -316,13 +383,11 @@ def get_h2h(df: pd.DataFrame, home: str, away: str) -> pd.DataFrame:
     """Get head-to-head matches between two teams over past H2H_YEARS."""
     if "Date" not in df.columns or df["Date"].isna().all():
         return pd.DataFrame()
-
     cutoff = df["Date"].max() - pd.DateOffset(years=H2H_YEARS)
     mask = (
-        (((df["HomeTeam"] == home) & (df["AwayTeam"] == away)) |
-         ((df["HomeTeam"] == away) & (df["AwayTeam"] == home)))
-        & (df["Date"] >= cutoff)
-    )
+        ((df["HomeTeam"] == home) & (df["AwayTeam"] == away))
+        | ((df["HomeTeam"] == away) & (df["AwayTeam"] == home))
+    ) & (df["Date"] >= cutoff)
     h2h = df.loc[mask].copy()
     h2h.sort_values("Date", inplace=True)
     return h2h
@@ -331,9 +396,9 @@ def get_h2h(df: pd.DataFrame, home: str, away: str) -> pd.DataFrame:
 def main() -> None:
     st.title("Football Data Dashboard")
     st.write(
-        "Select a league and match to explore probabilities and statistics. "
-        "This dashboard uses the last 10 matches for each team to compute weighted averages "
-        "and displays head-to-head results over the past five years."
+        "Select a league and match (or custom home/away) to explore probabilities and statistics. "
+        "This dashboard uses the last N matches for each team to compute weighted averages "
+        "and displays head-to-head results over the past years."
     )
 
     league = st.sidebar.selectbox("League", list(DATA_PATHS.keys()))
@@ -342,45 +407,83 @@ def main() -> None:
     if df.empty:
         st.stop()
 
+    # Data scope: season vs all seasons
+    calc_scope = st.sidebar.selectbox(
+        "Data scope for calculations", ["Selected season", "All seasons"], index=0
+    )
+
     # Season selection
     seasons = sorted(df["Season"].dropna().unique()) if "Season" in df.columns else []
-    if not seasons:
-        st.error("No hay temporadas disponibles en los datos cargados.")
-        st.stop()
+    if seasons:
+        season = st.sidebar.selectbox("Season", seasons)
+    else:
+        season = None
 
-    season = st.sidebar.selectbox("Season", seasons)
-    season_df = df[df["Season"] == season].copy()
-    season_df.sort_values("Date", inplace=True)
+    base_df = df.copy()
+    if calc_scope == "Selected season" and season is not None:
+        base_df = df[df["Season"] == season].copy()
 
-    # Match selection
-    match_options = season_df.apply(
-        lambda r: f"{r['Date'].date()} — {r['HomeTeam']} vs {r['AwayTeam']}", axis=1
-    ).tolist()
+    base_df = base_df.dropna(subset=["Date"]).sort_values("Date")
 
-    if not match_options:
-        st.error("No hay partidos disponibles para la temporada seleccionada.")
-        st.stop()
-
-    match_idx = st.sidebar.selectbox(
-        "Match", range(len(match_options)), format_func=lambda i: match_options[i]
+    # Match mode selection
+    mode = st.sidebar.radio(
+        "Match selection mode",
+        ["Select match from dataset", "Custom matchup (Home/Away)"]
     )
-    match_row = season_df.iloc[match_idx]
-    home_team = match_row["HomeTeam"]
-    away_team = match_row["AwayTeam"]
+
+    N_any = st.sidebar.selectbox("N last matches (general)", [10, 15, 20, 30], index=0)
+    N_ha = st.sidebar.selectbox("N last matches (home/away)", [5, 10, 15, 20], index=1)
+    H2H_years = st.sidebar.selectbox("H2H lookback (years)", [3, 5, 10], index=1)
+
+    if mode == "Select match from dataset":
+        # Filter base_df by selected season for match options
+        if season is not None:
+            season_df = df[df["Season"] == season].copy()
+        else:
+            season_df = df.copy()
+        season_df.sort_values("Date", inplace=True)
+        match_options = season_df.apply(
+            lambda r: f"{r['Date'].date()} — {r['HomeTeam']} vs {r['AwayTeam']}", axis=1
+        ).tolist()
+        match_idx = st.sidebar.selectbox(
+            "Match", range(len(match_options)), format_func=lambda i: match_options[i]
+        )
+        match_row = season_df.iloc[match_idx]
+        home_team = match_row["HomeTeam"]
+        away_team = match_row["AwayTeam"]
+        selected_date = match_row["Date"].date()
+    else:
+        teams = sorted(list(set(base_df["HomeTeam"].dropna().unique()).union(set(base_df["AwayTeam"].dropna().unique()))))
+        home_team = st.sidebar.selectbox("Home team", teams, index=0)
+        away_candidates = [t for t in teams if t != home_team]
+        away_team = st.sidebar.selectbox("Away team", away_candidates, index=0)
+        selected_date = None
+        match_row = None
 
     st.header(f"{home_team} vs {away_team}")
-    st.write(f"Date: {match_row['Date'].date()} | Season: {season} | League: {league}")
+    header_info = f"League: {league}"
+    if season is not None:
+        header_info += f" | Season: {season}"
+    if selected_date is not None:
+        header_info += f" | Date: {selected_date}"
+    st.write(header_info)
 
-    tab1, tab2, tab3 = st.tabs(["Match Info", "Team Stats", "Head-to-Head"])
+    tab1, tab2, tab3, tab4 = st.tabs(["Match Info", "Team Stats", "Head-to-Head", "Probabilities"])
 
     with tab1:
         st.subheader("Match details")
-        st.table(pd.DataFrame([match_row]))
+        if match_row is not None:
+            st.table(pd.DataFrame([match_row]))
+        else:
+            st.write("No specific match selected (custom matchup mode)")
 
     with tab2:
-        st.subheader("Weighted team statistics (last 10 matches)")
-        home_stats = compute_team_stats(season_df, home_team)
-        away_stats = compute_team_stats(season_df, away_team)
+        st.subheader("Weighted team statistics (last N matches)")
+        team_df = base_df.copy()
+        if season is not None and calc_scope == "Selected season":
+            team_df = df[df["Season"] == season]
+        home_stats = compute_team_stats(team_df, home_team)
+        away_stats = compute_team_stats(team_df, away_team)
 
         if not home_stats or not away_stats:
             st.warning("No sufficient match history to compute stats for one or both teams.")
@@ -416,14 +519,105 @@ def main() -> None:
             st.table(form_table.set_index("Equipo"))
 
     with tab3:
-        st.subheader("Head-to-head results (past 5 years)")
-        h2h = get_h2h(df, home_team, away_team)
+        st.subheader("Head-to-head results (past years)")
+        h2h = get_h2h(base_df, home_team, away_team)
         if h2h.empty:
             st.write("No head-to-head matches found in the selected period.")
         else:
             display_cols = ["Date", "HomeTeam", "AwayTeam", "FTHG", "FTAG", "FTR", "HC", "AC", "HY", "AY", "HR", "AR"]
             existing_cols = [c for c in display_cols if c in h2h.columns]
             st.dataframe(h2h[existing_cols].reset_index(drop=True))
+            # Show summary results
+            def h2h_result(row: pd.Series) -> str:
+                if row["FTHG"] > row["FTAG"]:
+                    winner = row["HomeTeam"]
+                elif row["FTHG"] < row["FTAG"]:
+                    winner = row["AwayTeam"]
+                else:
+                    return "Draw"
+                return "HomeTeam" if winner == home_team else "AwayTeam"
+            results = h2h.apply(h2h_result, axis=1)
+            counts = results.value_counts()
+            st.write("H2H Summary:")
+            st.write(counts)
+
+    with tab4:
+        st.subheader("Empirical probability calculator")
+        # Build subsets for probabilities
+        subsets = {
+            f"HOME last {N_any} (any venue)": subset_lastN_any(base_df, home_team, N_any),
+            f"HOME last {N_ha} (home)": subset_lastN_home(base_df, home_team, N_ha),
+            f"AWAY last {N_any} (any venue)": subset_lastN_any(base_df, away_team, N_any),
+            f"AWAY last {N_ha} (away)": subset_lastN_away(base_df, away_team, N_ha),
+            f"H2H last {H2H_years} years": subset_h2h(base_df, home_team, away_team, H2H_years),
+        }
+        # Show volumes for context
+        vol = pd.DataFrame([{"Subset": k, "N": len(v)} for k, v in subsets.items()])
+        st.dataframe(vol, hide_index=True)
+
+        st.markdown("---")
+
+        cat = st.selectbox("Category", ["Goles", "Tarjetas", "Córners", "Hándicap"], index=0)
+
+        if cat in ["Goles", "Tarjetas", "Córners"]:
+            side_label = st.radio("Over / Under", ["Over", "Under"], horizontal=True)
+            side_key = "over" if side_label == "Over" else "under"
+            if cat == "Goles":
+                scope = st.selectbox("Scope", ["Total match"], index=0)
+                col = "goals_total"
+                lines = [x + 0.5 for x in range(0, 6)]
+            elif cat == "Tarjetas":
+                scope = st.selectbox("Scope", ["Total match", "Home team", "Away team"], index=0)
+                if scope == "Total match":
+                    col = "cards_total"
+                    lines = [x + 0.5 for x in range(0, 8)]
+                elif scope == "Home team":
+                    col = "cards_home"
+                    lines = [x + 0.5 for x in range(0, 5)]
+                else:
+                    col = "cards_away"
+                    lines = [x + 0.5 for x in range(0, 5)]
+            else:  # Córners
+                scope = st.selectbox("Scope", ["Total match", "Home team", "Away team"], index=0)
+                if scope == "Total match":
+                    col = "corners_total"
+                    lines = [x + 0.5 for x in range(0, 15)]
+                elif scope == "Home team":
+                    col = "corners_home"
+                    lines = [x + 0.5 for x in range(0, 11)]
+                else:
+                    col = "corners_away"
+                    lines = [x + 0.5 for x in range(0, 11)]
+
+            line = st.select_slider("Line", options=lines, value=lines[2])
+
+            if st.button("Calculate", key="calc_btn"):
+                rows = []
+                for name, sdf in subsets.items():
+                    res = over_under_prob(sdf, col, float(line), side_key)
+                    if res["p"] is None:
+                        prob_txt = "—"
+                    else:
+                        prob_txt = f"{res['p']*100:.1f}% ({res['hits']}/{res['n']})"
+                    rows.append({"Subset": name, "Probability": prob_txt, "N": res["n"]})
+                out = pd.DataFrame(rows)
+                st.dataframe(out, hide_index=True)
+        else:
+            team_role = st.selectbox("Team for handicap", ["Home", "Away"], index=0)
+            team_role_key = "home" if team_role == "Home" else "away"
+            h_line = st.selectbox("Handicap line", [-2.5, -1.5, -0.5, 0.5, 1.5, 2.5], index=2)
+
+            if st.button("Calculate", key="handicap_btn"):
+                rows = []
+                for name, sdf in subsets.items():
+                    if "goal_diff" not in sdf.columns:
+                        rows.append({"Subset": name, "Probability": "—", "N": len(sdf)})
+                        continue
+                    res = handicap_prob(sdf, team_role_key, float(h_line))
+                    prob_txt = "—" if res["p"] is None else f"{res['p']*100:.1f}% ({res['hits']}/{res['n']})"
+                    rows.append({"Subset": name, "Probability": prob_txt, "N": res["n"]})
+                out = pd.DataFrame(rows)
+                st.dataframe(out, hide_index=True)
 
     st.caption("Data source: local cleaned CSVs or Supabase/PostgreSQL (if USE_DB=true).")
 
