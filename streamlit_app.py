@@ -110,6 +110,10 @@ def calc_over_under_for_subset(
         Dictionary with keys: "p" (probability float or None), "hits" (int),
         "n" (int), and "fails" (List[str]) listing opponents and values for failing matches.
     """
+    # If category is cards or corners, time frame must be full match since half‑split data is not available
+    if category in ["Tarjetas", "Córners"] and time_frame != "Full match":
+        time_frame = "Full match"
+
     # Determine which time frame column to use for goals
     if category == "Goles":
         if time_frame == "First Half":
@@ -956,10 +960,16 @@ def main() -> None:
         st.dataframe(vol, hide_index=True)
         st.markdown("---")
 
-        # Choose category and time frame
-        cat = st.selectbox("Category", ["Goles", "Tarjetas", "Córners", "Hándicap"], index=0)
-        # Time frame selection for goals, cards and corners
-        time_frame = st.selectbox("Time frame", ["Full match", "First Half", "Second Half"], index=0)
+        # Choose category
+        cat = st.selectbox(
+            "Category", ["Goles", "Tarjetas", "Córners", "Hándicap"], index=0
+        )
+        # Time frame selection: for goals allow first/second half; for cards and corners use full match only
+        if cat == "Goles":
+            time_options = ["Full match", "First Half", "Second Half"]
+        else:
+            time_options = ["Full match"]
+        time_frame = st.selectbox("Time frame", time_options, index=0)
 
         if cat in ["Goles", "Tarjetas", "Córners"]:
             side_label = st.radio("Over / Under", ["Over", "Under"], horizontal=True)
@@ -998,7 +1008,7 @@ def main() -> None:
             # Show referee statistics for cards
             if cat == "Tarjetas":
                 # Collect list of referees from the full dataset
-                refs = df.get("Referee").dropna().unique() if "Referee" in df.columns else []
+                refs = df["Referee"].dropna().unique() if "Referee" in df.columns else []
                 if len(refs) > 0:
                     selected_ref = st.selectbox(
                         "Referee (optional)",
