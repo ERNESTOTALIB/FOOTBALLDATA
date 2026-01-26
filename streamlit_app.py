@@ -43,6 +43,163 @@ H2H_YEARS = 5
 # Number of matches to use for form weighting
 FORM_MATCHES = 10
 
+# Additional helper functions for per-team metrics and probability calculations
+def value_metric_for_team(row: pd.Series, team: str, metric: str):
+    """
+    Returns the value of a metric (cards or corners) for the specified team in a given match row.
+
+    Parameters
+    ----------
+    row : pd.Series
+        A row from the matches DataFrame.
+    team : str
+        Team name to extract the metric for.
+    metric : str
+        One of {"cards", "corners"} indicating which metric to extract.
+
+    Returns
+    -------
+    float or None
+        The value of the metric for the team in that match, or None if the team is not part of the match.
+    """
+    if metric == "cards":
+        if row.get("HomeTeam") == team:
+            return row.get("cards_home", None)
+        elif row.get("AwayTeam") == team:
+            return row.get("cards_away", None)
+    elif metric == "corners":
+        if row.get("HomeTeam") == team:
+            return row.get("corners_home", None)
+        elif row.get("AwayTeam") == team:
+            return row.get("corners_away", None)
+    return None
+
+def calc_over_under_for_subset(
+    df_subset: pd.DataFrame,
+    category: str,
+    scope: str,
+    line: float,
+    side: str,
+    home_team: str,
+    away_team: str
+) -> Dict[str, object]:
+    """
+    Calculate over/under probability and list of failures for a given subset.
+
+    Parameters
+    ----------
+    df_subset : pd.DataFrame
+        Filtered DataFrame for the subset.
+    category : str
+        One of "Goles", "Tarjetas", "Córners".
+    scope : str
+        Scope selected by user ("Total match", "Home", "Away").
+    line : float
+        Threshold line (e.g., 2.5).
+    side : str
+        "over" or "under" indicating the direction of the comparison.
+    home_team : str
+        Name of the home team in the selected matchup.
+    away_team : str
+        Name of the away team in the selected matchup.
+
+    Returns
+    -------
+    dict
+        Dictionary with keys: "p" (probability float or None), "hits" (int),
+        "n" (int), and "fails" (List[str]) listing opponents and values for failing matches.
+    """
+    # Goals always operate on total goals irrespective of scope
+    if category == "Goles":
+        series = df_subset["goals_total"].dropna()
+        n = len(series)
+        if n == 0:
+            return {"p": None, "hits": 0, "n": 0, "fails": []}
+        hits_mask = (series > line) if side == "over" else (series < line)
+        hits = int(hits_mask.sum())
+        fails_mask = ~hits_mask
+        fails_list = []
+        for idx in series[fails_mask].index:
+            row = df_subset.loc[idx]
+            # Determine opponent relative to home_team; fallback to away_team
+            if row.get("HomeTeam") == home_team:
+                opp = row.get("AwayTeam")
+            elif row.get("AwayTeam") == home_team:
+                opp = row.get("HomeTeam")
+            else:
+                if row.get("HomeTeam") == away_team:
+                    opp = row.get("AwayTeam")
+                elif row.get("AwayTeam") == away_team:
+                    opp = row.get("HomeTeam")
+                else:
+                    opp = row.get("AwayTeam")
+            val = row.get("goals_total")
+            fails_list.append(f"{opp} ({val:.0f})")
+        return {"p": hits / n if n > 0 else None, "hits": hits, "n": n, "fails": fails_list}
+
+    # Determine metric for cards or corners
+    metric = None
+    if category == "Tarjetas":
+        metric = "cards"
+    elif category == "Córners":
+        metric = "corners"
+
+    if metric is not None:
+        # Total match scope uses aggregate columns
+        if scope == "Total match":
+            col = "cards_total" if metric == "cards" else "corners_total"
+            series = df_subset[col].dropna()
+            n = len(series)
+            if n == 0:
+                return {"p": None, "hits": 0, "n": 0, "fails": []}
+            hits_mask = (series > line) if side == "over" else (series < line)
+            hits = int(hits_mask.sum())
+            fails_mask = ~hits_mask
+            fails_list = []
+            for idx in series[fails_mask].index:
+                row = df_subset.loc[idx]
+                if row.get("HomeTeam") == home_team:
+                    opp = row.get("AwayTeam")
+                elif row.get("AwayTeam") == home_team:
+                    opp = row.get("HomeTeam")
+                else:
+                    if row.get("HomeTeam") == away_team:
+                        opp = row.get("AwayTeam")
+                    elif row.get("AwayTeam") == away_team:
+                        opp = row.get("HomeTeam")
+                    else:
+                        opp = row.get("AwayTeam")
+                val = row.get(col)
+                fails_list.append(f"{opp} ({val:.0f})")
+            return {"p": hits / n if n > 0 else None, "hits": hits, "n": n, "fails": fails_list}
+        # Team-specific scopes (Home or Away)
+        team_assigned = home_team if scope == "Home" else away_team
+        entries = []
+        for idx, row in df_subset.iterrows():
+            v = value_metric_for_team(row, team_assigned, metric)
+            if v is None:
+                continue
+            entries.append((idx, v, row))
+        n = len(entries)
+        if n == 0:
+            return {"p": None, "hits": 0, "n": 0, "fails": []}
+        hits = 0
+        fails_list = []
+        for idx, v, row in entries:
+            ok = (v > line) if side == "over" else (v < line)
+            if ok:
+                hits += 1
+            else:
+                if row.get("HomeTeam") == team_assigned:
+                    opp = row.get("AwayTeam")
+                else:
+                    opp = row.get("HomeTeam")
+                fails_list.append(f"{opp} ({v:.0f})")
+        return {"p": hits / n if n > 0 else None, "hits": hits, "n": n, "fails": fails_list}
+
+    # Default case: no valid category
+    return {"p": None, "hits": 0, "n": 0, "fails": []}
+
 
 def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -468,8 +625,10 @@ def main() -> None:
 
     with tab2:
         st.subheader("Weighted team statistics (last 10 matches)")
-        home_stats = compute_team_stats(base_df[base_df["Season"] == season], home_team)
-        away_stats = compute_team_stats(base_df[base_df["Season"] == season], away_team)
+        # Compute weighted averages using matches from the selected season
+        season_mask = base_df["Season"] == season
+        home_stats = compute_team_stats(base_df[season_mask], home_team)
+        away_stats = compute_team_stats(base_df[season_mask], away_team)
         if not home_stats or not away_stats:
             st.warning("No sufficient match history to compute stats for one or both teams.")
         else:
@@ -503,9 +662,38 @@ def main() -> None:
             ])
             st.table(form_table.set_index("Equipo"))
 
+            # Compute and display average total goals, corners and cards for the teams in their roles
+            home_matches_as_home = base_df[(base_df["Season"] == season) & (base_df["HomeTeam"] == home_team)]
+            away_matches_as_away = base_df[(base_df["Season"] == season) & (base_df["AwayTeam"] == away_team)]
+            def mean_or_nan(series):
+                return series.mean() if len(series) > 0 else float("nan")
+            avg_home_goals = mean_or_nan(home_matches_as_home.get("goals_total", pd.Series(dtype=float)))
+            avg_home_corners = mean_or_nan(home_matches_as_home.get("corners_total", pd.Series(dtype=float)))
+            avg_home_cards = mean_or_nan(home_matches_as_home.get("cards_total", pd.Series(dtype=float)))
+            avg_away_goals = mean_or_nan(away_matches_as_away.get("goals_total", pd.Series(dtype=float)))
+            avg_away_corners = mean_or_nan(away_matches_as_away.get("corners_total", pd.Series(dtype=float)))
+            avg_away_cards = mean_or_nan(away_matches_as_away.get("cards_total", pd.Series(dtype=float)))
+            avg_totals = pd.DataFrame([
+                {
+                    "Equipo": home_team,
+                    "Media Goles Totales (como local)": f"{avg_home_goals:.2f}",
+                    "Media Córners Totales (como local)": f"{avg_home_corners:.2f}",
+                    "Media Tarjetas Totales (como local)": f"{avg_home_cards:.2f}",
+                },
+                {
+                    "Equipo": away_team,
+                    "Media Goles Totales (como visitante)": f"{avg_away_goals:.2f}",
+                    "Media Córners Totales (como visitante)": f"{avg_away_corners:.2f}",
+                    "Media Tarjetas Totales (como visitante)": f"{avg_away_cards:.2f}",
+                },
+            ])
+            st.write("Average totals by position (historical):")
+            st.table(avg_totals.set_index("Equipo"))
+
     with tab3:
-        st.subheader("Head-to-head results (past 5 years)")
-        h2h = get_h2h(base_df[base_df["Season"] == season], home_team, away_team)
+        # Show head-to-head matches across the selected data scope using the H2H_years parameter
+        st.subheader(f"Head-to-head results (last {H2H_years} years)")
+        h2h = subset_h2h(base_df, home_team, away_team, H2H_years)
         if h2h.empty:
             st.write("No head-to-head matches found in the selected period.")
         else:
@@ -515,7 +703,10 @@ def main() -> None:
             ]
             existing_cols = [c for c in display_cols if c in h2h.columns]
             st.dataframe(h2h[existing_cols].reset_index(drop=True))
+
+            # Summarize outcomes from perspective of the selected home team
             def h2h_result(row: pd.Series) -> str:
+                # Determine winner of the match
                 if row["FTHG"] > row["FTAG"]:
                     winner = row["HomeTeam"]
                 elif row["FTHG"] < row["FTAG"]:
@@ -523,6 +714,7 @@ def main() -> None:
                 else:
                     return "Draw"
                 return "HomeTeam" if winner == home_team else "AwayTeam"
+
             results = h2h.apply(h2h_result, axis=1)
             counts = results.value_counts()
             st.write("H2H Summary:")
@@ -577,18 +769,39 @@ def main() -> None:
 
             line_sel = st.select_slider("Line", options=lines, value=lines[2])
 
+            # Prepare session state for over/under results
             if "prob_out" not in st.session_state:
                 st.session_state["prob_out"] = None
+            # When the user clicks calculate, compute probability and fails for each subset
             if st.button("Calculate", key="calc_btn"):
                 rows = []
                 for name, sdf in subsets.items():
-                    res = over_under_prob(sdf, col, float(line_sel), side_key)
+                    # Use custom function to compute probability and failures
+                    res = calc_over_under_for_subset(
+                        sdf,
+                        cat,
+                        scope,
+                        float(line_sel),
+                        side_key,
+                        home_team,
+                        away_team,
+                    )
                     if res["p"] is None:
                         prob_txt = "-"
                     else:
                         prob_txt = f"{res['p']*100:.1f}% ({res['hits']}/{res['n']})"
-                    rows.append({"Subset": name, "Probability": prob_txt, "N": res["n"]})
+                    # Concatenate list of fails into a single string
+                    fails_txt = ", ".join(res.get("fails", [])) if res.get("fails") else ""
+                    rows.append(
+                        {
+                            "Subset": name,
+                            "Probability": prob_txt,
+                            "N": res.get("n", 0),
+                            "Fails": fails_txt,
+                        }
+                    )
                 st.session_state["prob_out"] = rows
+            # Display results if available
             if st.session_state.get("prob_out"):
                 out = pd.DataFrame(st.session_state["prob_out"])
                 st.dataframe(out, hide_index=True)
