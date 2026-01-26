@@ -16,6 +16,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
+
 # ---------------------------------------------------------------------------
 # Configuration
 
@@ -59,8 +60,7 @@ def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
         return df
 
     # 1) Strip whitespace and build a lowercase lookup
-    original_cols = list(df.columns)
-    cleaned_cols = [str(c).strip() for c in original_cols]
+    cleaned_cols = [str(c).strip() for c in df.columns]
     df.columns = cleaned_cols
 
     lower_map = {c.lower(): c for c in df.columns}
@@ -132,7 +132,6 @@ def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
         "season": "Season",
     }
 
-    # 3) Build a rename dict from existing columns to canonical columns
     rename_dict = {}
     for lower_name, canonical in canonical_by_lower.items():
         if lower_name in lower_map:
@@ -141,7 +140,6 @@ def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
     if rename_dict:
         df = df.rename(columns=rename_dict)
 
-    # 4) Parse/ensure Date if present
     if "Date" in df.columns:
         df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
 
@@ -150,24 +148,24 @@ def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
 
 def add_derived_cols(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
-    # Goals totals and difference
     if "FTHG" in df.columns and "FTAG" in df.columns:
         df["goals_total"] = df["FTHG"].fillna(0) + df["FTAG"].fillna(0)
         df["goal_diff"] = df["FTHG"].fillna(0) - df["FTAG"].fillna(0)
-    # Cards totals
+
     for c in ["HY", "AY", "HR", "AR"]:
         if c not in df.columns:
             df[c] = 0
     df["cards_total"] = df["HY"].fillna(0) + df["AY"].fillna(0) + df["HR"].fillna(0) + df["AR"].fillna(0)
     df["cards_home"] = df["HY"].fillna(0) + df["HR"].fillna(0)
     df["cards_away"] = df["AY"].fillna(0) + df["AR"].fillna(0)
-    # Corners totals
+
     for c in ["HC", "AC"]:
         if c not in df.columns:
             df[c] = 0
     df["corners_total"] = df["HC"].fillna(0) + df["AC"].fillna(0)
     df["corners_home"] = df["HC"].fillna(0)
     df["corners_away"] = df["AC"].fillna(0)
+
     return df
 
 
@@ -214,14 +212,14 @@ def subset_h2h(df: pd.DataFrame, home: str, away: str, years: int) -> pd.DataFra
     if "Date" not in df.columns or df["Date"].isna().all():
         return pd.DataFrame()
     cutoff = df["Date"].max() - pd.DateOffset(years=int(years))
-    m = (((df["HomeTeam"] == home) & (df["AwayTeam"] == away)) |
-         ((df["HomeTeam"] == away) & (df["AwayTeam"] == home)))
+    m = (
+        ((df["HomeTeam"] == home) & (df["AwayTeam"] == away))
+        | ((df["HomeTeam"] == away) & (df["AwayTeam"] == home))
+    )
     return df[m & (df["Date"] >= cutoff)].sort_values("Date")
 
 
-@st.cache_data
 def load_data(league: str) -> pd.DataFrame:
-    """Load match data for the given league (DB if enabled, else local CSV)."""
     use_db = os.environ.get("USE_DB", "false").lower() == "true"
     db_url = os.environ.get("DATABASE_URL")
 
@@ -235,7 +233,6 @@ def load_data(league: str) -> pd.DataFrame:
                 "Add 'psycopg2-binary' to requirements.txt"
             )
             return pd.DataFrame()
-
         try:
             conn = psycopg2.connect(db_url)
         except Exception as e:
@@ -276,8 +273,6 @@ def load_data(league: str) -> pd.DataFrame:
             conn.close()
 
         df = normalize_columns(df)
-        df = add_derived_cols(df)
-
         required = ["Date", "HomeTeam", "AwayTeam"]
         missing = [c for c in required if c not in df.columns]
         if missing:
@@ -304,7 +299,6 @@ def load_data(league: str) -> pd.DataFrame:
 
     df = pd.read_csv(path)
     df = normalize_columns(df)
-    df = add_derived_cols(df)
 
     required = ["Date", "HomeTeam", "AwayTeam"]
     missing = [c for c in required if c not in df.columns]
@@ -319,7 +313,6 @@ def load_data(league: str) -> pd.DataFrame:
 
 
 def compute_outcome(row: pd.Series) -> str:
-    """Compute full-time result of a match based on goals."""
     if row["FTHG"] > row["FTAG"]:
         return "H"
     if row["FTHG"] < row["FTAG"]:
@@ -328,7 +321,6 @@ def compute_outcome(row: pd.Series) -> str:
 
 
 def team_form(df: pd.DataFrame, team: str, n: int = FORM_MATCHES) -> pd.DataFrame:
-    """Return last n matches for team with outcome and goals."""
     team_matches = df[(df["HomeTeam"] == team) | (df["AwayTeam"] == team)].copy()
     team_matches.sort_values("Date", inplace=True)
     team_matches = team_matches.tail(n)
@@ -337,7 +329,6 @@ def team_form(df: pd.DataFrame, team: str, n: int = FORM_MATCHES) -> pd.DataFram
 
 
 def weighted_average(values: np.ndarray, weights: np.ndarray) -> float:
-    """Compute weighted average with fallback if weights sum to zero."""
     if len(values) == 0:
         return float("nan")
     w_sum = weights.sum()
@@ -347,7 +338,6 @@ def weighted_average(values: np.ndarray, weights: np.ndarray) -> float:
 
 
 def compute_team_stats(df: pd.DataFrame, team: str) -> Dict[str, float]:
-    """Compute weighted stats for a team based on last N matches."""
     form = team_form(df, team, FORM_MATCHES)
     if form.empty:
         return {}
@@ -369,10 +359,13 @@ def compute_team_stats(df: pd.DataFrame, team: str) -> Dict[str, float]:
         "weighted_goals_against_home": safe_weighted(home_matches.get("FTAG"), weights),
         "weighted_goals_for_away": safe_weighted(away_matches.get("FTAG"), weights),
         "weighted_goals_against_away": safe_weighted(away_matches.get("FTHG"), weights),
+
         "weighted_corners_home": safe_weighted(home_matches.get("HC"), weights),
         "weighted_corners_away": safe_weighted(away_matches.get("AC"), weights),
+
         "weighted_yellows_home": safe_weighted(home_matches.get("HY"), weights),
         "weighted_yellows_away": safe_weighted(away_matches.get("AY"), weights),
+
         "weighted_reds_home": safe_weighted(home_matches.get("HR"), weights),
         "weighted_reds_away": safe_weighted(away_matches.get("AR"), weights),
     }
@@ -380,14 +373,15 @@ def compute_team_stats(df: pd.DataFrame, team: str) -> Dict[str, float]:
 
 
 def get_h2h(df: pd.DataFrame, home: str, away: str) -> pd.DataFrame:
-    """Get head-to-head matches between two teams over past H2H_YEARS."""
     if "Date" not in df.columns or df["Date"].isna().all():
         return pd.DataFrame()
+
     cutoff = df["Date"].max() - pd.DateOffset(years=H2H_YEARS)
     mask = (
-        ((df["HomeTeam"] == home) & (df["AwayTeam"] == away))
-        | ((df["HomeTeam"] == away) & (df["AwayTeam"] == home))
-    ) & (df["Date"] >= cutoff)
+        (((df["HomeTeam"] == home) & (df["AwayTeam"] == away)) |
+         ((df["HomeTeam"] == away) & (df["AwayTeam"] == home)))
+        & (df["Date"] >= cutoff)
+    )
     h2h = df.loc[mask].copy()
     h2h.sort_values("Date", inplace=True)
     return h2h
@@ -396,9 +390,9 @@ def get_h2h(df: pd.DataFrame, home: str, away: str) -> pd.DataFrame:
 def main() -> None:
     st.title("Football Data Dashboard")
     st.write(
-        "Select a league and match (or custom home/away) to explore probabilities and statistics. "
-        "This dashboard uses the last N matches for each team to compute weighted averages "
-        "and displays head-to-head results over the past years."
+        "Select a league and match to explore probabilities and statistics. "
+        "This dashboard uses the last 10 matches for each team to compute weighted averages "
+        "and displays head-to-head results over the past five years."
     )
 
     league = st.sidebar.selectbox("League", list(DATA_PATHS.keys()))
@@ -407,41 +401,41 @@ def main() -> None:
     if df.empty:
         st.stop()
 
-    # Data scope: season vs all seasons
-    calc_scope = st.sidebar.selectbox(
-        "Data scope for calculations", ["Selected season", "All seasons"], index=0
-    )
+    df = add_derived_cols(df)
+
+    # Ensure Date is datetime
+    df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
 
     # Season selection
     seasons = sorted(df["Season"].dropna().unique()) if "Season" in df.columns else []
-    if seasons:
-        season = st.sidebar.selectbox("Season", seasons)
-    else:
-        season = None
+    if not seasons:
+        st.error("No hay temporadas disponibles en los datos cargados.")
+        st.stop()
 
-    base_df = df.copy()
-    if calc_scope == "Selected season" and season is not None:
-        base_df = df[df["Season"] == season].copy()
+    season = st.sidebar.selectbox("Season", seasons)
+    season_df = df[df["Season"] == season].copy()
+    season_df.sort_values("Date", inplace=True)
 
-    base_df = base_df.dropna(subset=["Date"]).sort_values("Date")
-
-    # Match mode selection
+    # Match or custom matchup selection
+    st.sidebar.markdown("---")
     mode = st.sidebar.radio(
-        "Match selection mode",
-        ["Select match from dataset", "Custom matchup (Home/Away)"]
+        "Mode",
+        ["Select match from dataset", "Custom matchup (Home/Away)"],
+        index=1
     )
-
+    calc_scope = st.sidebar.selectbox(
+        "Data scope for calculations",
+        ["Selected season", "All seasons"],
+        index=0
+    )
     N_any = st.sidebar.selectbox("N last matches (general)", [10, 15, 20, 30], index=0)
     N_ha = st.sidebar.selectbox("N last matches (home/away)", [5, 10, 15, 20], index=1)
     H2H_years = st.sidebar.selectbox("H2H lookback (years)", [3, 5, 10], index=1)
 
+    base_df = season_df if calc_scope == "Selected season" else df
+    base_df = base_df.dropna(subset=["Date"]).sort_values("Date")
+
     if mode == "Select match from dataset":
-        # Filter base_df by selected season for match options
-        if season is not None:
-            season_df = df[df["Season"] == season].copy()
-        else:
-            season_df = df.copy()
-        season_df.sort_values("Date", inplace=True)
         match_options = season_df.apply(
             lambda r: f"{r['Date'].date()} — {r['HomeTeam']} vs {r['AwayTeam']}", axis=1
         ).tolist()
@@ -451,40 +445,31 @@ def main() -> None:
         match_row = season_df.iloc[match_idx]
         home_team = match_row["HomeTeam"]
         away_team = match_row["AwayTeam"]
-        selected_date = match_row["Date"].date()
     else:
-        teams = sorted(list(set(base_df["HomeTeam"].dropna().unique()).union(set(base_df["AwayTeam"].dropna().unique()))))
-        home_team = st.sidebar.selectbox("Home team", teams, index=0)
+        teams = sorted(list(set(list(base_df["HomeTeam"].dropna()) + list(base_df["AwayTeam"].dropna()))))
+        home_team = st.sidebar.selectbox("Home Team", teams, index=0)
         away_candidates = [t for t in teams if t != home_team]
-        away_team = st.sidebar.selectbox("Away team", away_candidates, index=0)
-        selected_date = None
+        away_team = st.sidebar.selectbox("Away Team", away_candidates, index=0)
         match_row = None
 
     st.header(f"{home_team} vs {away_team}")
-    header_info = f"League: {league}"
-    if season is not None:
-        header_info += f" | Season: {season}"
-    if selected_date is not None:
-        header_info += f" | Date: {selected_date}"
-    st.write(header_info)
+    st.write(f"League: {league} | Season: {season} | Data scope: {calc_scope}")
 
-    tab1, tab2, tab3, tab4 = st.tabs(["Match Info", "Team Stats", "Head-to-Head", "Probabilities"])
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "Match Info", "Team Stats", "Head-to-Head", "Probabilities"
+    ])
 
     with tab1:
         st.subheader("Match details")
         if match_row is not None:
             st.table(pd.DataFrame([match_row]))
         else:
-            st.write("No specific match selected (custom matchup mode)")
+            st.write("Custom matchup: no specific match selected from dataset.")
 
     with tab2:
-        st.subheader("Weighted team statistics (last N matches)")
-        team_df = base_df.copy()
-        if season is not None and calc_scope == "Selected season":
-            team_df = df[df["Season"] == season]
-        home_stats = compute_team_stats(team_df, home_team)
-        away_stats = compute_team_stats(team_df, away_team)
-
+        st.subheader("Weighted team statistics (last 10 matches)")
+        home_stats = compute_team_stats(base_df[base_df["Season"] == season], home_team)
+        away_stats = compute_team_stats(base_df[base_df["Season"] == season], away_team)
         if not home_stats or not away_stats:
             st.warning("No sufficient match history to compute stats for one or both teams.")
         else:
@@ -519,15 +504,17 @@ def main() -> None:
             st.table(form_table.set_index("Equipo"))
 
     with tab3:
-        st.subheader("Head-to-head results (past years)")
-        h2h = get_h2h(base_df, home_team, away_team)
+        st.subheader("Head-to-head results (past 5 years)")
+        h2h = get_h2h(base_df[base_df["Season"] == season], home_team, away_team)
         if h2h.empty:
             st.write("No head-to-head matches found in the selected period.")
         else:
-            display_cols = ["Date", "HomeTeam", "AwayTeam", "FTHG", "FTAG", "FTR", "HC", "AC", "HY", "AY", "HR", "AR"]
+            display_cols = [
+                "Date", "HomeTeam", "AwayTeam", "FTHG", "FTAG", "FTR",
+                "HC", "AC", "HY", "AY", "HR", "AR"
+            ]
             existing_cols = [c for c in display_cols if c in h2h.columns]
             st.dataframe(h2h[existing_cols].reset_index(drop=True))
-            # Show summary results
             def h2h_result(row: pd.Series) -> str:
                 if row["FTHG"] > row["FTAG"]:
                     winner = row["HomeTeam"]
@@ -543,7 +530,7 @@ def main() -> None:
 
     with tab4:
         st.subheader("Empirical probability calculator")
-        # Build subsets for probabilities
+        # Build subsets
         subsets = {
             f"HOME last {N_any} (any venue)": subset_lastN_any(base_df, home_team, N_any),
             f"HOME last {N_ha} (home)": subset_lastN_home(base_df, home_team, N_ha),
@@ -551,10 +538,8 @@ def main() -> None:
             f"AWAY last {N_ha} (away)": subset_lastN_away(base_df, away_team, N_ha),
             f"H2H last {H2H_years} years": subset_h2h(base_df, home_team, away_team, H2H_years),
         }
-        # Show volumes for context
         vol = pd.DataFrame([{"Subset": k, "N": len(v)} for k, v in subsets.items()])
         st.dataframe(vol, hide_index=True)
-
         st.markdown("---")
 
         cat = st.selectbox("Category", ["Goles", "Tarjetas", "Córners", "Hándicap"], index=0)
@@ -562,61 +547,74 @@ def main() -> None:
         if cat in ["Goles", "Tarjetas", "Córners"]:
             side_label = st.radio("Over / Under", ["Over", "Under"], horizontal=True)
             side_key = "over" if side_label == "Over" else "under"
+
             if cat == "Goles":
                 scope = st.selectbox("Scope", ["Total match"], index=0)
                 col = "goals_total"
-                lines = [x + 0.5 for x in range(0, 6)]
+                lines = [x + 0.5 for x in range(0, 6)]  # 0.5 to 5.5
             elif cat == "Tarjetas":
-                scope = st.selectbox("Scope", ["Total match", "Home team", "Away team"], index=0)
+                scope = st.selectbox("Scope", ["Total match", "Home", "Away"], index=0)
                 if scope == "Total match":
                     col = "cards_total"
-                    lines = [x + 0.5 for x in range(0, 8)]
-                elif scope == "Home team":
+                    lines = [x + 0.5 for x in range(0, 8)]  # 0.5 to 7.5
+                elif scope == "Home":
                     col = "cards_home"
-                    lines = [x + 0.5 for x in range(0, 5)]
+                    lines = [x + 0.5 for x in range(0, 5)]  # 0.5 to 4.5
                 else:
                     col = "cards_away"
                     lines = [x + 0.5 for x in range(0, 5)]
             else:  # Córners
-                scope = st.selectbox("Scope", ["Total match", "Home team", "Away team"], index=0)
+                scope = st.selectbox("Scope", ["Total match", "Home", "Away"], index=0)
                 if scope == "Total match":
                     col = "corners_total"
-                    lines = [x + 0.5 for x in range(0, 15)]
-                elif scope == "Home team":
+                    lines = [x + 0.5 for x in range(0, 15)]  # 0.5 to 14.5
+                elif scope == "Home":
                     col = "corners_home"
-                    lines = [x + 0.5 for x in range(0, 11)]
+                    lines = [x + 0.5 for x in range(0, 11)]  # 0.5 to 10.5
                 else:
                     col = "corners_away"
                     lines = [x + 0.5 for x in range(0, 11)]
 
-            line = st.select_slider("Line", options=lines, value=lines[2])
+            line_sel = st.select_slider("Line", options=lines, value=lines[2])
 
+            if "prob_out" not in st.session_state:
+                st.session_state["prob_out"] = None
             if st.button("Calculate", key="calc_btn"):
                 rows = []
                 for name, sdf in subsets.items():
-                    res = over_under_prob(sdf, col, float(line), side_key)
+                    res = over_under_prob(sdf, col, float(line_sel), side_key)
                     if res["p"] is None:
-                        prob_txt = "—"
+                        prob_txt = "-"
                     else:
                         prob_txt = f"{res['p']*100:.1f}% ({res['hits']}/{res['n']})"
                     rows.append({"Subset": name, "Probability": prob_txt, "N": res["n"]})
-                out = pd.DataFrame(rows)
+                st.session_state["prob_out"] = rows
+            if st.session_state.get("prob_out"):
+                out = pd.DataFrame(st.session_state["prob_out"])
                 st.dataframe(out, hide_index=True)
+
         else:
-            team_role = st.selectbox("Team for handicap", ["Home", "Away"], index=0)
+            # Handicap
+            team_role = st.selectbox("Team", ["Home", "Away"], index=0)
             team_role_key = "home" if team_role == "Home" else "away"
             h_line = st.selectbox("Handicap line", [-2.5, -1.5, -0.5, 0.5, 1.5, 2.5], index=2)
-
+            if "handicap_out" not in st.session_state:
+                st.session_state["handicap_out"] = None
             if st.button("Calculate", key="handicap_btn"):
                 rows = []
                 for name, sdf in subsets.items():
                     if "goal_diff" not in sdf.columns:
-                        rows.append({"Subset": name, "Probability": "—", "N": len(sdf)})
+                        rows.append({"Subset": name, "Probability": "-", "N": len(sdf)})
                         continue
                     res = handicap_prob(sdf, team_role_key, float(h_line))
-                    prob_txt = "—" if res["p"] is None else f"{res['p']*100:.1f}% ({res['hits']}/{res['n']})"
+                    if res["p"] is None:
+                        prob_txt = "-"
+                    else:
+                        prob_txt = f"{res['p']*100:.1f}% ({res['hits']}/{res['n']})"
                     rows.append({"Subset": name, "Probability": prob_txt, "N": res["n"]})
-                out = pd.DataFrame(rows)
+                st.session_state["handicap_out"] = rows
+            if st.session_state.get("handicap_out"):
+                out = pd.DataFrame(st.session_state["handicap_out"])
                 st.dataframe(out, hide_index=True)
 
     st.caption("Data source: local cleaned CSVs or Supabase/PostgreSQL (if USE_DB=true).")
