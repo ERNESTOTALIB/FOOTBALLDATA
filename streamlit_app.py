@@ -81,7 +81,8 @@ def calc_over_under_for_subset(
     line: float,
     side: str,
     home_team: str,
-    away_team: str
+    away_team: str,
+    time_frame: str = "Full match",
 ) -> Dict[str, object]:
     """
     Calculate over/under probability and list of failures for a given subset.
@@ -109,12 +110,19 @@ def calc_over_under_for_subset(
         Dictionary with keys: "p" (probability float or None), "hits" (int),
         "n" (int), and "fails" (List[str]) listing opponents and values for failing matches.
     """
-    # Goals always operate on total goals irrespective of scope
+    # Determine which time frame column to use for goals
     if category == "Goles":
-        series = df_subset["goals_total"].dropna()
+        if time_frame == "First Half":
+            col_name = "goals_first_half"
+        elif time_frame == "Second Half":
+            col_name = "goals_second_half"
+        else:
+            col_name = "goals_total"
+        series = df_subset[col_name].dropna()
         n = len(series)
         if n == 0:
             return {"p": None, "hits": 0, "n": 0, "fails": []}
+        # Define hit condition
         hits_mask = (series > line) if side == "over" else (series < line)
         hits = int(hits_mask.sum())
         fails_mask = ~hits_mask
@@ -133,7 +141,7 @@ def calc_over_under_for_subset(
                     opp = row.get("HomeTeam")
                 else:
                     opp = row.get("AwayTeam")
-            val = row.get("goals_total")
+            val = row.get(col_name)
             fails_list.append(f"{opp} ({val:.0f})")
         return {"p": hits / n if n > 0 else None, "hits": hits, "n": n, "fails": fails_list}
 
@@ -145,9 +153,54 @@ def calc_over_under_for_subset(
         metric = "corners"
 
     if metric is not None:
-        # Total match scope uses aggregate columns
+        # Choose appropriate column based on scope and time frame
+        if metric == "cards":
+            if scope == "Total match":
+                if time_frame == "First Half":
+                    col = "cards_first_half"
+                elif time_frame == "Second Half":
+                    col = "cards_second_half"
+                else:
+                    col = "cards_total"
+            elif scope == "Home":
+                if time_frame == "First Half":
+                    col = "cards_home_first_half"
+                elif time_frame == "Second Half":
+                    col = "cards_home_second_half"
+                else:
+                    col = "cards_home"
+            else:  # Away scope
+                if time_frame == "First Half":
+                    col = "cards_away_first_half"
+                elif time_frame == "Second Half":
+                    col = "cards_away_second_half"
+                else:
+                    col = "cards_away"
+        else:  # corners
+            if scope == "Total match":
+                if time_frame == "First Half":
+                    col = "corners_first_half"
+                elif time_frame == "Second Half":
+                    col = "corners_second_half"
+                else:
+                    col = "corners_total"
+            elif scope == "Home":
+                if time_frame == "First Half":
+                    col = "corners_home_first_half"
+                elif time_frame == "Second Half":
+                    col = "corners_home_second_half"
+                else:
+                    col = "corners_home"
+            else:  # Away
+                if time_frame == "First Half":
+                    col = "corners_away_first_half"
+                elif time_frame == "Second Half":
+                    col = "corners_away_second_half"
+                else:
+                    col = "corners_away"
+
+        # Total match scope: simple series of col
         if scope == "Total match":
-            col = "cards_total" if metric == "cards" else "corners_total"
             series = df_subset[col].dropna()
             n = len(series)
             if n == 0:
@@ -158,6 +211,7 @@ def calc_over_under_for_subset(
             fails_list = []
             for idx in series[fails_mask].index:
                 row = df_subset.loc[idx]
+                # Determine opponent relative to home_team and away_team
                 if row.get("HomeTeam") == home_team:
                     opp = row.get("AwayTeam")
                 elif row.get("AwayTeam") == home_team:
@@ -172,11 +226,26 @@ def calc_over_under_for_subset(
                 val = row.get(col)
                 fails_list.append(f"{opp} ({val:.0f})")
             return {"p": hits / n if n > 0 else None, "hits": hits, "n": n, "fails": fails_list}
+
         # Team-specific scopes (Home or Away)
         team_assigned = home_team if scope == "Home" else away_team
         entries = []
         for idx, row in df_subset.iterrows():
-            v = value_metric_for_team(row, team_assigned, metric)
+            # Determine value based on metric and time frame for the assigned team
+            if metric == "cards":
+                if row.get("HomeTeam") == team_assigned:
+                    v = row.get("cards_home" if time_frame == "Full match" else ("cards_home_first_half" if time_frame == "First Half" else "cards_home_second_half"), None)
+                elif row.get("AwayTeam") == team_assigned:
+                    v = row.get("cards_away" if time_frame == "Full match" else ("cards_away_first_half" if time_frame == "First Half" else "cards_away_second_half"), None)
+                else:
+                    v = None
+            else:  # corners
+                if row.get("HomeTeam") == team_assigned:
+                    v = row.get("corners_home" if time_frame == "Full match" else ("corners_home_first_half" if time_frame == "First Half" else "corners_home_second_half"), None)
+                elif row.get("AwayTeam") == team_assigned:
+                    v = row.get("corners_away" if time_frame == "Full match" else ("corners_away_first_half" if time_frame == "First Half" else "corners_away_second_half"), None)
+                else:
+                    v = None
             if v is None:
                 continue
             entries.append((idx, v, row))
@@ -190,6 +259,7 @@ def calc_over_under_for_subset(
             if ok:
                 hits += 1
             else:
+                # Determine opponent relative to assigned team
                 if row.get("HomeTeam") == team_assigned:
                     opp = row.get("AwayTeam")
                 else:
@@ -287,6 +357,9 @@ def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
         "division": "League",
 
         "season": "Season",
+        # Referee mapping
+        "referee": "Referee",
+        "ref": "Referee",
     }
 
     rename_dict = {}
@@ -323,6 +396,29 @@ def add_derived_cols(df: pd.DataFrame) -> pd.DataFrame:
     df["corners_home"] = df["HC"].fillna(0)
     df["corners_away"] = df["AC"].fillna(0)
 
+    # Add first-half and second-half metrics if available, else fallback to equal split
+    # Goals: use half-time goals if present
+    if "HTHG" in df.columns and "HTAG" in df.columns:
+        df["goals_first_half"] = df["HTHG"].fillna(0) + df["HTAG"].fillna(0)
+        df["goals_second_half"] = df["goals_total"] - df["goals_first_half"]
+    else:
+        df["goals_first_half"] = df["goals_total"] / 2.0
+        df["goals_second_half"] = df["goals_total"] / 2.0
+    # Cards: assume equal split between halves if specific data not available
+    df["cards_first_half"] = df["cards_total"] / 2.0
+    df["cards_second_half"] = df["cards_total"] / 2.0
+    df["cards_home_first_half"] = df["cards_home"] / 2.0
+    df["cards_home_second_half"] = df["cards_home"] / 2.0
+    df["cards_away_first_half"] = df["cards_away"] / 2.0
+    df["cards_away_second_half"] = df["cards_away"] / 2.0
+    # Corners: assume equal split between halves if specific data not available
+    df["corners_first_half"] = df["corners_total"] / 2.0
+    df["corners_second_half"] = df["corners_total"] / 2.0
+    df["corners_home_first_half"] = df["corners_home"] / 2.0
+    df["corners_home_second_half"] = df["corners_home"] / 2.0
+    df["corners_away_first_half"] = df["corners_away"] / 2.0
+    df["corners_away_second_half"] = df["corners_away"] / 2.0
+
     return df
 
 
@@ -348,6 +444,132 @@ def handicap_prob(df: pd.DataFrame, team_role: str, line: float) -> dict:
     else:
         hits = int(((-gd + line) > 0).sum())
     return {"p": hits / n, "hits": hits, "n": n}
+
+
+def compute_referee_card_stats(
+    df: pd.DataFrame,
+    referee_name: str,
+    home_team: str,
+    away_team: str,
+    last_n: int = 30,
+) -> Dict[str, object]:
+    """
+    Compute card-related statistics for a given referee.
+
+    This function calculates several metrics based on the last ``last_n``
+    matches officiated by ``referee_name`` in the provided DataFrame ``df``.
+    It returns the overall average total cards shown, the average cards
+    awarded to home and away teams, as well as the average cards given to
+    the specific ``home_team`` and ``away_team`` if they have been
+    officiated by the referee. It also computes probabilities of the total
+    cards exceeding each half-point line from 0.5 to 7.5.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        The complete matches DataFrame with normalized column names and
+        derived card columns (cards_total, cards_home, cards_away).
+    referee_name : str
+        Name of the referee to compute statistics for.
+    home_team : str
+        The home team selected in the matchup (to compute team-specific stats).
+    away_team : str
+        The away team selected in the matchup (to compute team-specific stats).
+    last_n : int, optional
+        The number of most recent matches to consider for the referee. Defaults to 30.
+
+    Returns
+    -------
+    dict
+        A dictionary containing the number of matches considered (``n``),
+        average total cards (``avg_total_cards``), average cards to home
+        teams (``avg_home_cards``), average cards to away teams
+        (``avg_away_cards``), average cards awarded to the selected
+        ``home_team`` (``avg_cards_to_home_team``) and ``away_team``
+        (``avg_cards_to_away_team``) if applicable, as well as a
+        dictionary ``over_probs`` mapping each half-point line to the
+        probability that total cards exceed that line.
+    """
+    # Filter matches officiated by the referee
+    ref_matches = df[df.get("Referee") == referee_name]
+    ref_matches = ref_matches.sort_values("Date")
+    # Use the last ``last_n`` matches
+    if last_n > 0:
+        ref_matches = ref_matches.tail(last_n)
+    n_matches = len(ref_matches)
+    if n_matches == 0:
+        return {
+            "n": 0,
+            "avg_total_cards": None,
+            "avg_home_cards": None,
+            "avg_away_cards": None,
+            "avg_cards_to_home_team": None,
+            "avg_cards_to_away_team": None,
+            "matches_home_team": 0,
+            "matches_away_team": 0,
+            "over_probs": {},
+        }
+    # Calculate average totals
+    avg_total_cards = ref_matches.get("cards_total", pd.Series(dtype=float)).dropna().mean()
+    avg_home_cards = ref_matches.get("cards_home", pd.Series(dtype=float)).dropna().mean()
+    avg_away_cards = ref_matches.get("cards_away", pd.Series(dtype=float)).dropna().mean()
+    # Compute probabilities for each line 0.5 to 7.5
+    lines = [x + 0.5 for x in range(0, 8)]
+    over_probs = {}
+    for line in lines:
+        series = ref_matches.get("cards_total", pd.Series(dtype=float)).dropna()
+        if len(series) > 0:
+            hits = int((series > line).sum())
+            over_probs[line] = hits / len(series)
+        else:
+            over_probs[line] = None
+    # Average cards given specifically to the selected teams
+    cards_to_home_team = []
+    matches_home_team = 0
+    if home_team:
+        for _, row in ref_matches.iterrows():
+            if row.get("HomeTeam") == home_team:
+                val = row.get("cards_home")
+                if pd.notna(val):
+                    cards_to_home_team.append(val)
+                    matches_home_team += 1
+            elif row.get("AwayTeam") == home_team:
+                val = row.get("cards_away")
+                if pd.notna(val):
+                    cards_to_home_team.append(val)
+                    matches_home_team += 1
+    avg_cards_to_home_team = (
+        np.mean(cards_to_home_team) if cards_to_home_team else None
+    )
+    # For away_team
+    cards_to_away_team = []
+    matches_away_team = 0
+    if away_team:
+        for _, row in ref_matches.iterrows():
+            if row.get("HomeTeam") == away_team:
+                val = row.get("cards_home")
+                if pd.notna(val):
+                    cards_to_away_team.append(val)
+                    matches_away_team += 1
+            elif row.get("AwayTeam") == away_team:
+                val = row.get("cards_away")
+                if pd.notna(val):
+                    cards_to_away_team.append(val)
+                    matches_away_team += 1
+    avg_cards_to_away_team = (
+        np.mean(cards_to_away_team) if cards_to_away_team else None
+    )
+    return {
+        "n": n_matches,
+        "avg_total_cards": avg_total_cards,
+        "avg_home_cards": avg_home_cards,
+        "avg_away_cards": avg_away_cards,
+        "avg_cards_to_home_team": avg_cards_to_home_team,
+        "avg_cards_to_away_team": avg_cards_to_away_team,
+        "matches_home_team": matches_home_team,
+        "matches_away_team": matches_away_team,
+        "over_probs": over_probs,
+    }
 
 
 def subset_lastN_any(df: pd.DataFrame, team: str, N: int) -> pd.DataFrame:
@@ -734,7 +956,10 @@ def main() -> None:
         st.dataframe(vol, hide_index=True)
         st.markdown("---")
 
+        # Choose category and time frame
         cat = st.selectbox("Category", ["Goles", "Tarjetas", "Córners", "Hándicap"], index=0)
+        # Time frame selection for goals, cards and corners
+        time_frame = st.selectbox("Time frame", ["Full match", "First Half", "Second Half"], index=0)
 
         if cat in ["Goles", "Tarjetas", "Córners"]:
             side_label = st.radio("Over / Under", ["Over", "Under"], horizontal=True)
@@ -767,7 +992,71 @@ def main() -> None:
                     col = "corners_away"
                     lines = [x + 0.5 for x in range(0, 11)]
 
+
             line_sel = st.select_slider("Line", options=lines, value=lines[2])
+
+            # Show referee statistics for cards
+            if cat == "Tarjetas":
+                # Collect list of referees from the full dataset
+                refs = df.get("Referee").dropna().unique() if "Referee" in df.columns else []
+                if len(refs) > 0:
+                    selected_ref = st.selectbox(
+                        "Referee (optional)",
+                        sorted(list(refs)),
+                        index=0,
+                        key="ref_select",
+                    )
+                    # Compute referee card stats using the full dataset (not just base_df) so we have enough matches
+                    ref_stats = compute_referee_card_stats(df, selected_ref, home_team, away_team, last_n=30)
+                    st.markdown(
+                        f"**Referee card stats for {selected_ref} (last {ref_stats['n']} matches):**"
+                    )
+                    if ref_stats["n"] == 0:
+                        st.write("No matches found for this referee in the dataset.")
+                    else:
+                        # Display probability of exceeding each line
+                        prob_rows = []
+                        for ln, prob in ref_stats["over_probs"].items():
+                            if prob is None:
+                                prob_txt = "-"
+                            else:
+                                prob_txt = f"{prob*100:.1f}%"
+                            prob_rows.append({"Line": ln, "P(> line)": prob_txt})
+                        st.table(pd.DataFrame(prob_rows))
+                        # Display average cards summary
+                        summary_rows = [
+                            {
+                                "Metric": "Average total cards",
+                                "Value": f"{ref_stats['avg_total_cards']:.2f}"
+                                if ref_stats['avg_total_cards'] is not None
+                                else "-",
+                            },
+                            {
+                                "Metric": "Average home cards",
+                                "Value": f"{ref_stats['avg_home_cards']:.2f}"
+                                if ref_stats['avg_home_cards'] is not None
+                                else "-",
+                            },
+                            {
+                                "Metric": "Average away cards",
+                                "Value": f"{ref_stats['avg_away_cards']:.2f}"
+                                if ref_stats['avg_away_cards'] is not None
+                                else "-",
+                            },
+                            {
+                                "Metric": f"Average cards to {home_team}",
+                                "Value": f"{ref_stats['avg_cards_to_home_team']:.2f}"
+                                if ref_stats['avg_cards_to_home_team'] is not None
+                                else "-",
+                            },
+                            {
+                                "Metric": f"Average cards to {away_team}",
+                                "Value": f"{ref_stats['avg_cards_to_away_team']:.2f}"
+                                if ref_stats['avg_cards_to_away_team'] is not None
+                                else "-",
+                            },
+                        ]
+                        st.table(pd.DataFrame(summary_rows))
 
             # Prepare session state for over/under results
             if "prob_out" not in st.session_state:
@@ -776,7 +1065,7 @@ def main() -> None:
             if st.button("Calculate", key="calc_btn"):
                 rows = []
                 for name, sdf in subsets.items():
-                    # Use custom function to compute probability and failures
+                    # Use custom function to compute probability and failures, passing time_frame
                     res = calc_over_under_for_subset(
                         sdf,
                         cat,
@@ -785,21 +1074,19 @@ def main() -> None:
                         side_key,
                         home_team,
                         away_team,
+                        time_frame,
                     )
                     if res["p"] is None:
                         prob_txt = "-"
                     else:
                         prob_txt = f"{res['p']*100:.1f}% ({res['hits']}/{res['n']})"
-                    # Concatenate list of fails into a single string
                     fails_txt = ", ".join(res.get("fails", [])) if res.get("fails") else ""
-                    rows.append(
-                        {
-                            "Subset": name,
-                            "Probability": prob_txt,
-                            "N": res.get("n", 0),
-                            "Fails": fails_txt,
-                        }
-                    )
+                    rows.append({
+                        "Subset": name,
+                        "Probability": prob_txt,
+                        "N": res.get("n", 0),
+                        "Fails": fails_txt,
+                    })
                 st.session_state["prob_out"] = rows
             # Display results if available
             if st.session_state.get("prob_out"):
