@@ -222,5 +222,47 @@ def main():
     upsert_referee_stats(df_stats, conn_str, league, season)
 
 
+# New main function for multiple leagues
+
+def main():
+    import os
+    import json
+    # Use multi-league environment variables if provided
+    conn_str = os.getenv("DATABASE_URL")
+    if not conn_str:
+        raise EnvironmentError("DATABASE_URL environment variable must be set")
+
+    base_urls_var = os.getenv("WHOSCORED_BASE_URLS")
+    league_names_var = os.getenv("LEAGUE_NAMES")
+    seasons_var = os.getenv("SEASONS")
+
+    if base_urls_var and league_names_var and seasons_var:
+        try:
+            base_urls = json.loads(base_urls_var)
+            league_names = json.loads(league_names_var)
+            seasons = json.loads(seasons_var)
+        except json.JSONDecodeError:
+            raise ValueError("WHOSCORED_BASE_URLS, LEAGUE_NAMES, and SEASONS must be valid JSON arrays")
+        if not (len(base_urls) == len(league_names) == len(seasons)):
+            raise ValueError("WHOSCORED_BASE_URLS, LEAGUE_NAMES, and SEASONS arrays must be of equal length")
+        for base_url, league, season in zip(base_urls, league_names, seasons):
+            df_stats = scrape_referee_statistics(base_url)
+            upsert_referee_stats(df_stats, conn_str, league, season)
+    else:
+        # Fall back to single league variables
+        base_url = os.getenv("WHOSCORED_BASE_URL")
+        league = os.getenv("LEAGUE_NAME", "Premier League")
+        season = os.getenv("SEASON", "2025/2026")
+        if not base_url:
+            raise EnvironmentError("WHOSCORED_BASE_URL environment variable must be set for single league scrape")
+        df_stats = scrape_referee_statistics(base_url)
+        upsert_referee_stats(df_stats, conn_str, league, season)
+
+
+
+if __name__ == "__main__":
+    main()
+
+
 if __name__ == "__main__":
     main()
