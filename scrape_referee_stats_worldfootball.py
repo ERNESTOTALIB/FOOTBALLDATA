@@ -1,4 +1,4 @@
-https://github.com/ERNESTOTALIB/FOOTBALLDATA/edit/main/scrape_referee_stats_worldfootball.py#!/usr/bin/env python3
+#!/usr/bin/env python3
 """
 Scrape referee statistics from worldfootball.net for multiple leagues and seasons,
 as defined in WORLDFOOTBALL_TARGETS_JSON environment variable (JSON list of objects).
