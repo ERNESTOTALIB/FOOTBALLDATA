@@ -611,13 +611,18 @@ def load_data(league: str) -> pd.DataFrame:
               s.home_reds AS hr,
               s.away_reds AS ar,
               fe.data->'fixture'->>'referee' AS referee,
-              fe.data->'fixture'->'enriched'->>'first_half_cards' AS first_half_cards,
-              fe.data->'fixture'->'enriched'->>'second_half_cards' AS second_half_cards,
+              fe.data->'enriched'->>'first_half_cards' AS first_half_cards,
+              fe.data->'enriched'->>'second_half_cards' AS second_half_cards,
               m.league AS league,
               m.season AS season
             FROM matches m
             JOIN match_stats s ON m.match_id = s.match_id
-            LEFT JOIN fixtures_enriched fe ON fe.fixture_id = m.match_id
+            /* Join enriched fixtures by date and team names (case-insensitive). Matches may have different
+               internal IDs than the API's fixture ID, so we join on date and team names instead of match_id. */
+            LEFT JOIN fixtures_enriched fe
+              ON (fe.data->'fixture'->>'date')::date = m.match_date
+             AND lower(fe.data->'teams'->'home'->>'name') = lower(m.home_team)
+             AND lower(fe.data->'teams'->'away'->>'name') = lower(m.away_team)
             WHERE m.league = %s;
         """
         try:
