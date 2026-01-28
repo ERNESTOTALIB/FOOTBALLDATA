@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+https://github.com/ERNESTOTALIB/FOOTBALLDATA/edit/main/scrape_referee_stats_worldfootball.py#!/usr/bin/env python3
 """
 Scrape referee statistics from worldfootball.net for multiple leagues and seasons,
 as defined in WORLDFOOTBALL_TARGETS_JSON environment variable (JSON list of objects).
@@ -34,9 +34,10 @@ def parse_worldfootball_table(url: str) -> pd.DataFrame:
     """
     Fetch worldfootball referee stats page and return DataFrame with columns:
     referee_name, country, matches, yellow_cards, yellow_red_cards, red_cards, penalties.
-    """
-  response = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=30)
-    response.raise_for_status()
+    """      
+        response = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=30)
+
+         response.raise_for_status()
     # Parse all tables on the page
     tables = pd.read_html(response.text)
     df = None
