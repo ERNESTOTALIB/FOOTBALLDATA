@@ -16,14 +16,35 @@ API_BASE = get_env("API_SPORTS_BASE")
 API_KEY = get_env("API_SPORTS_KEY")
 DATABASE_URL = get_env("DATABASE_URL")
 
+# Construct base URL and host for API-Football (API-Sports)
+# Remove scheme if provided and ensure we prepend https:// only once
+if API_BASE.startswith("http"):
+    BASE_URL = API_BASE.rstrip("/")
+else:
+    BASE_URL = "https://" + API_BASE.rstrip("/")
 
-def fetch_last_matches(count=10):
-    url = f"https://{API_BASE}/fixtures"
+HOST = API_BASE.replace("https://", "").split("/")[0]
+
+def fetch_last_matches(count: int = 10) -> dict:
+    """
+    Fetch the last `count` fixtures from the API-Football service.
+
+    Args:
+        count (int): Number of fixtures to fetch.
+
+    Returns:
+        dict: JSON response from the API.
+    """
+    url = f"{BASE_URL}/fixtures"
     params = {"last": count}
-    headers = {"x-rapidapi-key": API_KEY, "x-rapidapi-host": API_BASE}
+    headers = {
+        "x-rapidapi-key": API_KEY,
+        "x-rapidapi-host": HOST,
+    }
     response = requests.get(url, params=params, headers=headers, timeout=30)
     response.raise_for_status()
     return response.json()
+
 
 
 def upsert_fixtures(fixtures):
