@@ -9,7 +9,11 @@ on:
 jobs:
   scrape:
     runs-on: ubuntu-latest
-    env:
+   
+env
+    WHOSCORED_BASE_URLS: ${{ secrets.WHOSCORED_BASE_URLS }}
+    LEAGUE_NAMES: ${{ secrets.LEAGUE_NAMES }}
+    SEASONS: ${{ secrets.SEASONS }}
       WHOSCORED_BASE_URL: ${{ secrets.WHOSCORED_BASE_URL }}
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
       LEAGUE_NAME: ${{ secrets.LEAGUE_NAME }}
