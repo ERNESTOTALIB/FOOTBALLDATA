@@ -35,9 +35,9 @@ def parse_worldfootball_table(url: str) -> pd.DataFrame:
     Fetch worldfootball referee stats page and return DataFrame with columns:
     referee_name, country, matches, yellow_cards, yellow_red_cards, red_cards, penalties.
     """      
-        response = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=30)
+            response = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=30)
 
-         response.raise_for_status()
+            response.raise_for_status()
     # Parse all tables on the page
     tables = pd.read_html(response.text)
     df = None
